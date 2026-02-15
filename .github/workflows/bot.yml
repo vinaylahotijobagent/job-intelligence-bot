@@ -3,15 +3,20 @@ name: Job Intelligence Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 3,12 * * *"  # Runs at 9 AM and 6 PM IST
+    - cron: "30 3,12 * * *"  # 9 AM & 6 PM IST
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write   # 👈 required to push changes
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -26,3 +31,12 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python bot.py
+
+      - name: Commit updated database
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add jobs.db
+          git commit -m "Update jobs database" || echo "No changes to commit"
+          git push
++
