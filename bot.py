@@ -157,23 +157,21 @@ def parse_amazon_posting_date(dt_str):
 
 
 def ingest_amazon():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    total_checked = 0
-    inserted = 0
     offset = 0
 
     while True:
-    data = fetch_amazon_jobs(offset)
-    jobs_list = data.get("jobs", [])
+        data = fetch_amazon_jobs(offset)
+        jobs_list = data.get("jobs", [])
 
-    if jobs_list:
-        print("DEBUG FIRST AMAZON JOB:")
-        print(jobs_list[0])
-        break  # stop after first page for debugging
+        if jobs_list:
+            print("DEBUG FIRST AMAZON JOB:")
+            print(jobs_list[0])
+            break
 
-    break
+        break
+
+    return 0, 0
+
 
 
         for job in jobs_list:
