@@ -1,30 +1,17 @@
 import requests
 import os
-import hashlib
 import sqlite3
-from datetime import datetime
+import hashlib
+from datetime import datetime, timezone
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 DB_NAME = "jobs.db"
 
-KEYWORDS = [
-    "Data Analyst",
-    "Azure Data Engineer",
-    "Databricks",
-    "Power BI",
-    "BI Developer"
-]
+BASE_URL = "https://apply.careers.microsoft.com/api/pcsx/search"
 
-SEARCH_URLS = []
-
-for keyword in KEYWORDS:
-    encoded = keyword.replace(" ", "%20")
-    for start in [0, 25, 50]:
-        url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={encoded}&location=Hyderabad&f_TPR=r86400&start={start}"
-        SEARCH_URLS.append(url)
-
+KEYWORDS = ["data", "azure", "analytics", "bi", "databricks", "power"]
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -40,9 +27,8 @@ def create_db():
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
-            fingerprint TEXT PRIMARY KEY,
+            job_id TEXT PRIMARY KEY,
             title TEXT,
-            company TEXT,
             link TEXT,
             date_seen TEXT
         )
@@ -50,68 +36,67 @@ def create_db():
     conn.commit()
     conn.close()
 
-def create_fingerprint(company, title):
-    key = f"{company.lower().strip()}_{title.lower().strip()}"
-    return hashlib.md5(key.encode()).hexdigest()
+def fetch_microsoft_jobs(start):
+    params = {
+        "domain": "microsoft.com",
+        "query": "",
+        "location": "India, Telangana, Hyderabad",
+        "start": start,
+        "sort_by": "distance",
+        "filter_distance": 160,
+        "filter_include_remote": 1
+    }
 
-def fetch_jobs_from_url(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-    return response.text
+    response = requests.get(BASE_URL, params=params)
+    return response.json()
 
-def parse_jobs(html):
-    jobs = []
-    sections = html.split('base-card__full-link')
+def is_recent(posted_ts):
+    posted_time = datetime.fromtimestamp(posted_ts, tz=timezone.utc)
+    now = datetime.now(timezone.utc)
+    return (now - posted_time).total_seconds() <= 86400
 
-    for section in sections[1:]:
-        try:
-            link = section.split('href="')[1].split('"')[0]
-            title = section.split('>')[1].split('<')[0]
-            company = section.split('base-search-card__subtitle">')[1].split('<')[0]
+def matches_keywords(title):
+    title_lower = title.lower()
+    return any(keyword in title_lower for keyword in KEYWORDS)
 
-            jobs.append((title.strip(), company.strip(), link.strip()))
-        except:
-            continue
-
-    return jobs
-
-def store_and_notify(all_jobs):
+def process_jobs():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     new_count = 0
 
-    for title, company, link in all_jobs:
-        fingerprint = create_fingerprint(company, title)
+    for start in [0, 25, 50, 75]:
+        data = fetch_microsoft_jobs(start)
 
-        cursor.execute("SELECT 1 FROM jobs WHERE fingerprint=?", (fingerprint,))
-        exists = cursor.fetchone()
+        for job in data["data"]["positions"]:
+            job_id = str(job["id"])
+            title = job["name"]
+            posted_ts = job["postedTs"]
+            link = "https://apply.careers.microsoft.com" + job["positionUrl"]
 
-        if not exists:
-            cursor.execute(
-                "INSERT INTO jobs VALUES (?, ?, ?, ?, ?)",
-                (fingerprint, title, company, link, datetime.now().isoformat())
-            )
+            if not is_recent(posted_ts):
+                continue
 
-            message = f"🔥 <b>{title}</b>\n🏢 {company}\n🔗 {link}"
-            send_message(message)
+            if not matches_keywords(title):
+                continue
 
-            new_count += 1
+            cursor.execute("SELECT 1 FROM jobs WHERE job_id=?", (job_id,))
+            exists = cursor.fetchone()
 
-            if new_count >= 10:
-                break
+            if not exists:
+                cursor.execute(
+                    "INSERT INTO jobs VALUES (?, ?, ?, ?)",
+                    (job_id, title, link, datetime.now().isoformat())
+                )
+
+                message = f"🔥 <b>{title}</b>\n🏢 Microsoft\n🔗 {link}"
+                send_message(message)
+
+                new_count += 1
 
     conn.commit()
     conn.close()
 
 if __name__ == "__main__":
     create_db()
-
-    all_jobs = []
-
-    for url in SEARCH_URLS:
-        html = fetch_jobs_from_url(url)
-        jobs = parse_jobs(html)
-        all_jobs.extend(jobs)
-
-    store_and_notify(all_jobs)
+    process_jobs()
