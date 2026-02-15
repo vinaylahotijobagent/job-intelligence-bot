@@ -1,17 +1,26 @@
 import requests
 import os
 import sqlite3
-import hashlib
 from datetime import datetime, timezone
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 DB_NAME = "jobs.db"
-
 BASE_URL = "https://apply.careers.microsoft.com/api/pcsx/search"
 
-KEYWORDS = ["data", "azure", "analytics", "bi", "databricks", "power"]
+SEARCH_TERMS = [
+    "Data Analyst",
+    "Power BI",
+    "BI",
+    "Analytics",
+    "Databricks",
+    "Azure Data"
+]
+
+MAX_PAGES = 4  # 0,25,50,75
+DAYS_BACK = 5
+SECONDS_BACK = DAYS_BACK * 86400
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -30,69 +39,89 @@ def create_db():
             job_id TEXT PRIMARY KEY,
             title TEXT,
             link TEXT,
+            search_term TEXT,
+            posted_ts INTEGER,
             date_seen TEXT
         )
     """)
     conn.commit()
     conn.close()
 
-def fetch_microsoft_jobs(start):
+def is_recent(posted_ts):
+    posted_time = datetime.fromtimestamp(posted_ts, tz=timezone.utc)
+    now = datetime.now(timezone.utc)
+    return (now - posted_time).total_seconds() <= SECONDS_BACK
+
+def fetch_jobs(term, start):
     params = {
         "domain": "microsoft.com",
-        "query": "",
+        "query": term,
         "location": "India, Telangana, Hyderabad",
         "start": start,
         "sort_by": "distance",
         "filter_distance": 160,
         "filter_include_remote": 1
     }
-
     response = requests.get(BASE_URL, params=params)
     return response.json()
-
-def is_recent(posted_ts):
-    posted_time = datetime.fromtimestamp(posted_ts, tz=timezone.utc)
-    now = datetime.now(timezone.utc)
-    return (now - posted_time).total_seconds() <= 432000
-
-def matches_keywords(title):
-    title_lower = title.lower()
-    return any(keyword in title_lower for keyword in KEYWORDS)
 
 def process_jobs():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     new_count = 0
+    total_seen = 0
 
-    for start in [0, 25, 50, 75]:
-        data = fetch_microsoft_jobs(start)
+    for term in SEARCH_TERMS:
+        for page in range(MAX_PAGES):
+            start = page * 25
+            data = fetch_jobs(term, start)
 
-        for job in data["data"]["positions"]:
-            job_id = str(job["id"])
-            title = job["name"]
-            posted_ts = job["postedTs"]
-            link = "https://apply.careers.microsoft.com" + job["positionUrl"]
+            positions = data.get("data", {}).get("positions", [])
+            if not positions:
+                break
 
-            if not is_recent(posted_ts):
-                continue
+            for job in positions:
+                total_seen += 1
 
-            if not matches_keywords(title):
-                continue
+                job_id = str(job["id"])
+                title = job["name"]
+                posted_ts = job["postedTs"]
+                link = "https://apply.careers.microsoft.com" + job["positionUrl"]
 
-            cursor.execute("SELECT 1 FROM jobs WHERE job_id=?", (job_id,))
-            exists = cursor.fetchone()
+                if not is_recent(posted_ts):
+                    continue
 
-            if not exists:
-                cursor.execute(
-                    "INSERT INTO jobs VALUES (?, ?, ?, ?)",
-                    (job_id, title, link, datetime.now().isoformat())
-                )
+                cursor.execute("SELECT 1 FROM jobs WHERE job_id=?", (job_id,))
+                exists = cursor.fetchone()
 
-                message = f"🔥 <b>{title}</b>\n🏢 Microsoft\n🔗 {link}"
-                send_message(message)
+                if not exists:
+                    cursor.execute(
+                        "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?)",
+                        (job_id, title, link, term, posted_ts, datetime.now().isoformat())
+                    )
 
-                new_count += 1
+                    message = f"🔥 <b>{title}</b>\n🏢 Microsoft\n🔎 Matched: {term}\n🔗 {link}"
+                    send_message(message)
+
+                    new_count += 1
+
+                    if new_count >= 15:
+                        break
+
+            if new_count >= 15:
+                break
+
+        if new_count >= 15:
+            break
+
+    summary = f"""
+📊 Microsoft Scan Summary
+Total Checked: {total_seen}
+New Sent: {new_count}
+Window: Last {DAYS_BACK} days
+"""
+    send_message(summary)
 
     conn.commit()
     conn.close()
