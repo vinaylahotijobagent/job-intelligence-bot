@@ -19,7 +19,7 @@ SEARCH_TERMS = [
 ]
 
 MAX_PAGES = 4  # 0,25,50,75
-DAYS_BACK = 5
+DAYS_BACK = 1
 SECONDS_BACK = DAYS_BACK * 86400
 
 def send_message(text):
