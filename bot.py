@@ -19,7 +19,8 @@ MICROSOFT_SEARCH_TERMS = [
     "Databricks"
 ]
 
-MAX_PAGES = 5
+MAX_MS_PAGES = 5
+MAX_AMAZON_PAGES = 2   # HARD LIMIT (max 100 jobs scanned)
 DAYS_BACK = 1
 SECONDS_BACK = DAYS_BACK * 86400
 
@@ -89,7 +90,7 @@ def ingest_microsoft():
     inserted = 0
 
     for term in MICROSOFT_SEARCH_TERMS:
-        for page in range(MAX_PAGES):
+        for page in range(MAX_MS_PAGES):
             start = page * 25
             data = fetch_microsoft_jobs(term, start)
 
@@ -155,12 +156,11 @@ def ingest_amazon():
 
     total_checked = 0
     inserted = 0
-    offset = 0
 
-    while True:
+    for page in range(MAX_AMAZON_PAGES):
+        offset = page * 50
         data = fetch_amazon_jobs(offset)
 
-        # Amazon JSON structure uses "jobs" list
         jobs_list = data.get("jobs", [])
         if not jobs_list:
             break
@@ -168,14 +168,15 @@ def ingest_amazon():
         for job in jobs_list:
             total_checked += 1
 
-            # Amazon uses "updated_at" field
-            # Example: "2026-02-13T10:15:00Z"
             updated_at = job.get("updated_at")
             if not updated_at:
                 continue
 
-            dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
-            posted_ts = int(dt.timestamp())
+            try:
+                dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                posted_ts = int(dt.timestamp())
+            except:
+                continue
 
             if not is_recent(posted_ts):
                 continue
@@ -203,8 +204,6 @@ def ingest_amazon():
             ))
 
             inserted += 1
-
-        offset += len(jobs_list)
 
     conn.commit()
     conn.close()
