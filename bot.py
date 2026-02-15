@@ -53,7 +53,7 @@ def fetch_microsoft_jobs(start):
 def is_recent(posted_ts):
     posted_time = datetime.fromtimestamp(posted_ts, tz=timezone.utc)
     now = datetime.now(timezone.utc)
-    return (now - posted_time).total_seconds() <= 86400
+    return (now - posted_time).total_seconds() <= 259200
 
 def matches_keywords(title):
     title_lower = title.lower()
