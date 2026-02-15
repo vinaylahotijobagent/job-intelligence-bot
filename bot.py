@@ -166,7 +166,7 @@ def ingest_amazon():
 
     while True:
         data = fetch_amazon_jobs(offset)
-        jobs_list = data.get("jobs", [])
+        print(jobs_list[0])
 
         if not jobs_list:
             break
