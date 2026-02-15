@@ -3,11 +3,12 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-# ---------------- CONFIG ----------------
+# ================= CONFIG =================
 
 DB_NAME = "jobs.db"
 
 MICROSOFT_BASE_URL = "https://apply.careers.microsoft.com/api/pcsx/search"
+AMAZON_API = "https://www.amazon.jobs/en/search.json"
 
 MICROSOFT_SEARCH_TERMS = [
     "Data",
@@ -18,13 +19,11 @@ MICROSOFT_SEARCH_TERMS = [
     "Databricks"
 ]
 
-AMAZON_API = "https://www.amazon.jobs/en/search.json"
-
-MAX_PAGES = 5          # Pagination depth
-DAYS_BACK = 1          # Last 24 hours
+MAX_PAGES = 5
+DAYS_BACK = 1
 SECONDS_BACK = DAYS_BACK * 86400
 
-# ----------------------------------------
+# ==========================================
 
 
 def send_message(text):
@@ -61,9 +60,8 @@ def create_db():
 
 
 def is_recent(posted_ts):
-    posted_time = datetime.fromtimestamp(posted_ts, tz=timezone.utc)
-    now = datetime.now(timezone.utc)
-    return (now - posted_time).total_seconds() <= SECONDS_BACK
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    return (now_ts - posted_ts) <= SECONDS_BACK
 
 
 # ================= MICROSOFT =================
@@ -111,24 +109,24 @@ def ingest_microsoft():
                     continue
 
                 cursor.execute("SELECT 1 FROM jobs WHERE job_id=?", (job_id,))
-                exists = cursor.fetchone()
+                if cursor.fetchone():
+                    continue
 
-                if not exists:
-                    cursor.execute("""
-                        INSERT INTO jobs 
-                        (job_id, company, title, link, search_term, posted_ts, date_seen)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        job_id,
-                        "Microsoft",
-                        title,
-                        link,
-                        term,
-                        posted_ts,
-                        datetime.now().isoformat()
-                    ))
+                cursor.execute("""
+                    INSERT INTO jobs
+                    (job_id, company, title, link, search_term, posted_ts, date_seen)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    job_id,
+                    "Microsoft",
+                    title,
+                    link,
+                    term,
+                    posted_ts,
+                    datetime.now().isoformat()
+                ))
 
-                    inserted += 1
+                inserted += 1
 
     conn.commit()
     conn.close()
@@ -146,66 +144,65 @@ def fetch_amazon_jobs(offset=0):
         "loc_query": "Hyderabad",
         "base_query": ""
     }
+
     response = requests.get(AMAZON_API, params=params)
     return response.json()
 
 
-def parse_amazon_posting_date(dt_str):
-    # Example format: "2026-02-13T10:15:00Z"
-    dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-    return int(dt.timestamp())
-
-
 def ingest_amazon():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    total_checked = 0
+    inserted = 0
     offset = 0
 
     while True:
         data = fetch_amazon_jobs(offset)
+
+        # Amazon JSON structure uses "jobs" list
         jobs_list = data.get("jobs", [])
-
-        if jobs_list:
-            print("DEBUG FIRST AMAZON JOB:")
-            print(jobs_list[0])
+        if not jobs_list:
             break
-
-        break
-
-    return 0, 0
-
-
 
         for job in jobs_list:
             total_checked += 1
 
-            posted_ts = parse_amazon_posting_date(job["posting_date"])
-            now_ts = int(datetime.now(timezone.utc).timestamp())
+            # Amazon uses "updated_at" field
+            # Example: "2026-02-13T10:15:00Z"
+            updated_at = job.get("updated_at")
+            if not updated_at:
+                continue
 
-            if now_ts - posted_ts > SECONDS_BACK:
+            dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            posted_ts = int(dt.timestamp())
+
+            if not is_recent(posted_ts):
                 continue
 
             job_id = f"amz_{job['id']}"
-            title = job["title"]
-            link = "https://www.amazon.jobs" + job["url"]
+            title = job.get("title", "")
+            link = "https://www.amazon.jobs" + job.get("url", "")
 
             cursor.execute("SELECT 1 FROM jobs WHERE job_id=?", (job_id,))
-            exists = cursor.fetchone()
+            if cursor.fetchone():
+                continue
 
-            if not exists:
-                cursor.execute("""
-                    INSERT INTO jobs 
-                    (job_id, company, title, link, search_term, posted_ts, date_seen)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    job_id,
-                    "Amazon",
-                    title,
-                    link,
-                    "Amazon Search",
-                    posted_ts,
-                    datetime.now().isoformat()
-                ))
+            cursor.execute("""
+                INSERT INTO jobs
+                (job_id, company, title, link, search_term, posted_ts, date_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                job_id,
+                "Amazon",
+                title,
+                link,
+                "Amazon Search",
+                posted_ts,
+                datetime.now().isoformat()
+            ))
 
-                inserted += 1
+            inserted += 1
 
         offset += len(jobs_list)
 
