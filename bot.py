@@ -7,9 +7,15 @@ from datetime import datetime
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-LINKEDIN_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Data%20Analyst%20OR%20Azure%20OR%20Databricks%20OR%20Power%20BI&location=Hyderabad&f_TPR=r86400"
-
 DB_NAME = "jobs.db"
+
+SEARCH_URLS = [
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Data%20Analyst&location=Hyderabad&f_TPR=r86400",
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Azure%20Data%20Engineer&location=Hyderabad&f_TPR=r86400",
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Databricks&location=Hyderabad&f_TPR=r86400",
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Power%20BI&location=Hyderabad&f_TPR=r86400",
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=BI%20Developer&location=Hyderabad&f_TPR=r86400"
+]
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -39,36 +45,36 @@ def create_fingerprint(company, title):
     key = f"{company.lower().strip()}_{title.lower().strip()}"
     return hashlib.md5(key.encode()).hexdigest()
 
-def fetch_linkedin_jobs():
+def fetch_jobs_from_url(url):
     headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(LINKEDIN_URL, headers=headers)
+    response = requests.get(url, headers=headers)
     return response.text
 
 def parse_jobs(html):
     jobs = []
-    lines = html.split('base-card__full-link')
-    for line in lines[1:6]:
+    sections = html.split('base-card__full-link')
+
+    for section in sections[1:]:
         try:
-            link_part = line.split('href="')[1]
-            link = link_part.split('"')[0]
-
-            title_part = line.split('>')[1]
-            title = title_part.split('<')[0]
-
-            company_part = line.split('base-search-card__subtitle">')[1]
-            company = company_part.split('<')[0]
+            link = section.split('href="')[1].split('"')[0]
+            title = section.split('>')[1].split('<')[0]
+            company = section.split('base-search-card__subtitle">')[1].split('<')[0]
 
             jobs.append((title.strip(), company.strip(), link.strip()))
         except:
             continue
+
     return jobs
 
-def store_and_notify(jobs):
+def store_and_notify(all_jobs):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    for title, company, link in jobs:
+    new_count = 0
+
+    for title, company, link in all_jobs:
         fingerprint = create_fingerprint(company, title)
+
         cursor.execute("SELECT 1 FROM jobs WHERE fingerprint=?", (fingerprint,))
         exists = cursor.fetchone()
 
@@ -77,14 +83,26 @@ def store_and_notify(jobs):
                 "INSERT INTO jobs VALUES (?, ?, ?, ?, ?)",
                 (fingerprint, title, company, link, datetime.now().isoformat())
             )
+
             message = f"🔥 <b>{title}</b>\n🏢 {company}\n🔗 {link}"
             send_message(message)
+
+            new_count += 1
+
+            if new_count >= 10:
+                break
 
     conn.commit()
     conn.close()
 
 if __name__ == "__main__":
     create_db()
-    html = fetch_linkedin_jobs()
-    jobs = parse_jobs(html)
-    store_and_notify(jobs)
+
+    all_jobs = []
+
+    for url in SEARCH_URLS:
+        html = fetch_jobs_from_url(url)
+        jobs = parse_jobs(html)
+        all_jobs.extend(jobs)
+
+    store_and_notify(all_jobs)
