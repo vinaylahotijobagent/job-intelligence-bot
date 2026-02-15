@@ -9,13 +9,22 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 DB_NAME = "jobs.db"
 
-SEARCH_URLS = [
-    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Data%20Analyst&location=Hyderabad&f_TPR=r86400",
-    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Azure%20Data%20Engineer&location=Hyderabad&f_TPR=r86400",
-    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Databricks&location=Hyderabad&f_TPR=r86400",
-    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Power%20BI&location=Hyderabad&f_TPR=r86400",
-    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=BI%20Developer&location=Hyderabad&f_TPR=r86400"
+KEYWORDS = [
+    "Data Analyst",
+    "Azure Data Engineer",
+    "Databricks",
+    "Power BI",
+    "BI Developer"
 ]
+
+SEARCH_URLS = []
+
+for keyword in KEYWORDS:
+    encoded = keyword.replace(" ", "%20")
+    for start in [0, 25, 50]:
+        url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={encoded}&location=Hyderabad&f_TPR=r86400&start={start}"
+        SEARCH_URLS.append(url)
+
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
