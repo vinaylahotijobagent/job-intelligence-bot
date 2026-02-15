@@ -165,11 +165,16 @@ def ingest_amazon():
     offset = 0
 
     while True:
-        data = fetch_amazon_jobs(offset)
-        print(jobs_list[0])
+    data = fetch_amazon_jobs(offset)
+    jobs_list = data.get("jobs", [])
 
-        if not jobs_list:
-            break
+    if jobs_list:
+        print("DEBUG FIRST AMAZON JOB:")
+        print(jobs_list[0])
+        break  # stop after first page for debugging
+
+    break
+
 
         for job in jobs_list:
             total_checked += 1
