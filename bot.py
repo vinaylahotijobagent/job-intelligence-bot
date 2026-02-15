@@ -3,54 +3,64 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# ---------------- CONFIG ----------------
 
 DB_NAME = "jobs.db"
 BASE_URL = "https://apply.careers.microsoft.com/api/pcsx/search"
 
 SEARCH_TERMS = [
-    "Data Analyst",
-    "Power BI",
-    "BI",
+    "Data",
     "Analytics",
-    "Databricks",
-    "Azure Data"
+    "Data Engineer",
+    "Azure",
+    "Power BI",
+    "Databricks"
 ]
 
-MAX_PAGES = 4  # 0,25,50,75
-DAYS_BACK = 1
+MAX_PAGES = 5          # 0,25,50,75,100
+DAYS_BACK = 1          # Last 24 hours
 SECONDS_BACK = DAYS_BACK * 86400
 
+# ----------------------------------------
+
 def send_message(text):
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    CHAT_ID = os.getenv("CHAT_ID")
+
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
+        "text": text
     }
     requests.post(url, data=payload)
+
 
 def create_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
             job_id TEXT PRIMARY KEY,
+            company TEXT,
             title TEXT,
             link TEXT,
             search_term TEXT,
             posted_ts INTEGER,
+            processed INTEGER DEFAULT 0,
             date_seen TEXT
         )
     """)
+
     conn.commit()
     conn.close()
+
 
 def is_recent(posted_ts):
     posted_time = datetime.fromtimestamp(posted_ts, tz=timezone.utc)
     now = datetime.now(timezone.utc)
     return (now - posted_time).total_seconds() <= SECONDS_BACK
+
 
 def fetch_jobs(term, start):
     params = {
@@ -62,15 +72,17 @@ def fetch_jobs(term, start):
         "filter_distance": 160,
         "filter_include_remote": 1
     }
+
     response = requests.get(BASE_URL, params=params)
     return response.json()
 
-def process_jobs():
+
+def ingest_microsoft():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    new_count = 0
-    total_seen = 0
+    total_checked = 0
+    inserted = 0
 
     for term in SEARCH_TERMS:
         for page in range(MAX_PAGES):
@@ -82,7 +94,7 @@ def process_jobs():
                 break
 
             for job in positions:
-                total_seen += 1
+                total_checked += 1
 
                 job_id = str(job["id"])
                 title = job["name"]
@@ -96,36 +108,34 @@ def process_jobs():
                 exists = cursor.fetchone()
 
                 if not exists:
-                    cursor.execute(
-                        "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?)",
-                        (job_id, title, link, term, posted_ts, datetime.now().isoformat())
-                    )
+                    cursor.execute("""
+                        INSERT INTO jobs 
+                        (job_id, company, title, link, search_term, posted_ts, date_seen)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        job_id,
+                        "Microsoft",
+                        title,
+                        link,
+                        term,
+                        posted_ts,
+                        datetime.now().isoformat()
+                    ))
 
-                    message = f"🔥 <b>{title}</b>\n🏢 Microsoft\n🔎 Matched: {term}\n🔗 {link}"
-                    send_message(message)
-
-                    new_count += 1
-
-                    if new_count >= 15:
-                        break
-
-            if new_count >= 15:
-                break
-
-        if new_count >= 15:
-            break
-
-    summary = f"""
-📊 Microsoft Scan Summary
-Total Checked: {total_seen}
-New Sent: {new_count}
-Window: Last {DAYS_BACK} days
-"""
-    send_message(summary)
+                    inserted += 1
 
     conn.commit()
     conn.close()
 
+    summary = f"""
+Microsoft Ingestion Complete
+Checked: {total_checked}
+Inserted (Last 24h): {inserted}
+Search Terms: {', '.join(SEARCH_TERMS)}
+"""
+    send_message(summary)
+
+
 if __name__ == "__main__":
     create_db()
-    process_jobs()
+    ingest_microsoft()
