@@ -9,6 +9,7 @@ DB_NAME = "jobs.db"
 
 MICROSOFT_BASE_URL = "https://apply.careers.microsoft.com/api/pcsx/search"
 AMAZON_API = "https://www.amazon.jobs/en/search.json"
+JPMC_API = "https://jpmc.fa.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
 
 MICROSOFT_SEARCH_TERMS = [
     "Data",
@@ -20,7 +21,9 @@ MICROSOFT_SEARCH_TERMS = [
 ]
 
 MAX_MS_PAGES = 5
-MAX_AMAZON_PAGES = 2   # HARD LIMIT (max 100 jobs scanned)
+MAX_AMAZON_PAGES = 2   # max 100 jobs
+MAX_JPMC_PAGES = 4     # max 100 jobs
+
 DAYS_BACK = 1
 SECONDS_BACK = DAYS_BACK * 86400
 
@@ -198,7 +201,85 @@ def ingest_amazon():
                 "Amazon",
                 title,
                 link,
-                "Amazon Search",
+                "Hyderabad",
+                posted_ts,
+                datetime.now().isoformat()
+            ))
+
+            inserted += 1
+
+    conn.commit()
+    conn.close()
+
+    return total_checked, inserted
+
+
+# ================= JPMORGAN (Oracle HCM) =================
+
+def fetch_jpmc_jobs(offset=0):
+    params = {
+        "onlyData": "true",
+        "expand": "requisitionList",
+        "finder": "findReqs;siteNumber=CX_1001,facetsList=LOCATIONS;POSTING_DATES,limit=25,locationId=300000081155702,radius=25,radiusUnit=MI,sortBy=DISTANCE_ASC",
+        "offset": offset,
+        "limit": 25
+    }
+
+    response = requests.get(JPMC_API, params=params)
+    return response.json()
+
+
+def ingest_jpmc():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    total_checked = 0
+    inserted = 0
+
+    for page in range(MAX_JPMC_PAGES):
+        offset = page * 25
+        data = fetch_jpmc_jobs(offset)
+
+        items = data.get("items", [])
+        if not items:
+            break
+
+        requisitions = items[0].get("requisitionList", [])
+        if not requisitions:
+            break
+
+        for job in requisitions:
+            total_checked += 1
+
+            job_id = f"jpmc_{job['Id']}"
+            title = job["Title"]
+            posted_date = job["PostedDate"]
+
+            try:
+                dt = datetime.strptime(posted_date, "%Y-%m-%d")
+                posted_ts = int(dt.replace(tzinfo=timezone.utc).timestamp())
+            except:
+                continue
+
+            if not is_recent(posted_ts):
+                continue
+
+            link = f"https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/{job['Id']}"
+
+            cursor.execute("SELECT 1 FROM jobs WHERE job_id=?", (job_id,))
+            if cursor.fetchone():
+                continue
+
+            cursor.execute("""
+                INSERT INTO jobs
+                (job_id, company, title, link, search_term, posted_ts, date_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                job_id,
+                "JPMorgan",
+                title,
+                link,
+                "Hyderabad",
                 posted_ts,
                 datetime.now().isoformat()
             ))
@@ -218,6 +299,7 @@ if __name__ == "__main__":
 
     ms_checked, ms_inserted = ingest_microsoft()
     amz_checked, amz_inserted = ingest_amazon()
+    jpmc_checked, jpmc_inserted = ingest_jpmc()
 
     summary = f"""
 Daily Ingestion Summary (Last 24h)
@@ -229,6 +311,10 @@ Inserted: {ms_inserted}
 Amazon:
 Checked: {amz_checked}
 Inserted: {amz_inserted}
+
+JPMorgan:
+Checked: {jpmc_checked}
+Inserted: {jpmc_inserted}
 """
 
     send_message(summary)
