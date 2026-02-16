@@ -1,0 +1,4 @@
+DAYS_BACK = 1
+SECONDS_BACK = DAYS_BACK * 86400
+
+DB_NAME = "jobs.db"
